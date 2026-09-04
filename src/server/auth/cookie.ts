@@ -5,7 +5,10 @@ import { z } from "zod";
 export const DEVELOPMENT_AUTH_COOKIE = "wayv_dev_auth";
 
 export function isDevelopmentAuthEnabled() {
-  return process.env.NODE_ENV !== "production";
+  return (
+    process.env.NODE_ENV !== "production" ||
+    process.env.ENABLE_DEV_AUTH === "true"
+  );
 }
 
 const authCookiePayloadSchema = z.object({
