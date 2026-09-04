@@ -9,7 +9,8 @@ if (!databaseUrl) {
 }
 
 export const sqlClient = postgres(databaseUrl, {
-  max: 1,
+  // Multiple connections are required for PostgreSQL to enforce row locks between requests.
+  max: 10,
 });
 
 export const db = drizzle(sqlClient, { schema });

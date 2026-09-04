@@ -74,5 +74,15 @@ export const submissionIdSchema = z.object({
   submissionId: z.string().uuid(),
 });
 
+export const rejectionSchema = z.object({
+  rejectionReason: z.string().trim().min(1, "A rejection reason is required.").max(1_000),
+});
+
+export const submissionRejectSchema = submissionIdSchema.merge(rejectionSchema);
+
+export const pendingSubmissionsInputSchema = z.object({
+  campaignId: z.string().uuid(),
+}).merge(paginationSchema);
+
 export type SubmissionCreateInput = z.input<typeof submissionCreateSchema>;
 export type SubmissionCreateValues = z.output<typeof submissionCreateSchema>;
