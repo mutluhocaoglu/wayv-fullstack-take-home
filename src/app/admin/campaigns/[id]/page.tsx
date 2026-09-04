@@ -15,6 +15,10 @@ export default function AdminCampaignDetailPage() {
   const [rejectingSubmissionId, setRejectingSubmissionId] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("");
   const campaign = api.campaign.byId.useQuery({ campaignId: params.id });
+  const analyticsSummary = api.analytics.campaignSummary.useQuery({
+    campaignId: params.id,
+  });
+  const dailyViews = api.analytics.dailyViews.useQuery({ campaignId: params.id });
   const queue = api.submission.pendingByCampaign.useQuery({
     campaignId: params.id,
     page: 1,
@@ -28,6 +32,8 @@ export default function AdminCampaignDetailPage() {
         pageSize: 20,
       }),
       utils.campaign.byId.invalidate({ campaignId: params.id }),
+      utils.analytics.campaignSummary.invalidate({ campaignId: params.id }),
+      utils.analytics.dailyViews.invalidate({ campaignId: params.id }),
     ]);
   };
   const approve = api.submission.approve.useMutation({ onSuccess: refreshQueue });
@@ -54,6 +60,34 @@ export default function AdminCampaignDetailPage() {
         <Link className="rounded-md border px-4 py-2 text-sm font-medium" href={`/admin/campaigns/${campaign.data.id}/edit`}>Edit campaign</Link>
       </div>
       <section className="mt-8 rounded-lg border bg-white p-6"><CampaignSummary campaign={campaign.data} /></section>
+
+      <section className="mt-8">
+        <h2 className="text-xl font-semibold text-slate-900">Analytics</h2>
+        {analyticsSummary.isLoading ? <p className="mt-4 text-sm text-slate-600">Loading analytics...</p> : null}
+        {analyticsSummary.error ? <p className="mt-4 text-sm text-red-700">Unable to load analytics.</p> : null}
+        {analyticsSummary.data ? (
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <div className="rounded-lg border bg-white p-4"><p className="text-sm text-slate-600">Total views</p><p className="mt-1 text-2xl font-semibold text-slate-900">{analyticsSummary.data.totalViews}</p></div>
+            <div className="rounded-lg border bg-white p-4"><p className="text-sm text-slate-600">Budget spent</p><p className="mt-1 text-2xl font-semibold text-slate-900">{analyticsSummary.data.budgetSpentCents} cents</p></div>
+            <div className="rounded-lg border bg-white p-4"><p className="text-sm text-slate-600">Budget left</p><p className="mt-1 text-2xl font-semibold text-slate-900">{analyticsSummary.data.budgetLeftCents} cents</p></div>
+          </div>
+        ) : null}
+
+        <h3 className="mt-6 text-lg font-semibold text-slate-900">Daily views</h3>
+        {dailyViews.isLoading ? <p className="mt-3 text-sm text-slate-600">Loading daily views...</p> : null}
+        {dailyViews.error ? <p className="mt-3 text-sm text-red-700">Unable to load daily views.</p> : null}
+        {dailyViews.data ? (
+          <>
+            {dailyViews.data.every((day) => day.views === "0") ? <p className="mt-3 text-sm text-slate-600">No views are recorded for this campaign date range. Zero values are shown for the campaign dates.</p> : null}
+            <div className="mt-3 overflow-x-auto rounded-lg border bg-white">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-50 text-slate-600"><tr><th className="px-4 py-3 font-medium">Date (UTC)</th><th className="px-4 py-3 font-medium">Views</th></tr></thead>
+                <tbody>{dailyViews.data.map((day) => <tr className="border-t" key={day.date}><td className="px-4 py-3">{day.date}</td><td className="px-4 py-3">{day.views}</td></tr>)}</tbody>
+              </table>
+            </div>
+          </>
+        ) : null}
+      </section>
 
       <section className="mt-8">
         <h2 className="text-xl font-semibold text-slate-900">Review queue</h2>
