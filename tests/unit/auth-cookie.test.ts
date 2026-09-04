@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSignedAuthCookieValue,
+  isDevelopmentAuthEnabled,
   readSignedAuthCookieValue,
 } from "@/server/auth/cookie";
 
@@ -19,5 +20,17 @@ describe("development authentication cookie", () => {
     const tamperedCookie = `${cookie.slice(0, -1)}x`;
 
     expect(readSignedAuthCookieValue(tamperedCookie, secret)).toBeNull();
+  });
+
+  it("disables development authentication in production", () => {
+    const environment = process.env as { NODE_ENV?: string };
+    const originalNodeEnv = environment.NODE_ENV;
+    environment.NODE_ENV = "production";
+
+    try {
+      expect(isDevelopmentAuthEnabled()).toBe(false);
+    } finally {
+      environment.NODE_ENV = originalNodeEnv;
+    }
   });
 });

@@ -4,6 +4,10 @@ import { z } from "zod";
 
 export const DEVELOPMENT_AUTH_COOKIE = "wayv_dev_auth";
 
+export function isDevelopmentAuthEnabled() {
+  return process.env.NODE_ENV !== "production";
+}
+
 const authCookiePayloadSchema = z.object({
   userId: z.string().uuid(),
 });
@@ -72,6 +76,10 @@ export async function setDevelopmentAuthCookie(userId: string) {
 }
 
 export async function getDevelopmentAuthUserId() {
+  if (!isDevelopmentAuthEnabled()) {
+    return null;
+  }
+
   const cookieStore = await cookies();
   const cookie = cookieStore.get(DEVELOPMENT_AUTH_COOKIE);
   return readSignedAuthCookieValue(cookie?.value)?.userId ?? null;

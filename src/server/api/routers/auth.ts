@@ -1,7 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { setDevelopmentAuthCookie } from "@/server/auth/cookie";
+import {
+  isDevelopmentAuthEnabled,
+  setDevelopmentAuthCookie,
+} from "@/server/auth/cookie";
 import {
   createTRPCRouter,
   protectedProcedure,
@@ -12,7 +15,7 @@ import { users } from "@/server/db/schema";
 const userIdSchema = z.string().uuid();
 
 function assertDevelopmentOnly() {
-  if (process.env.NODE_ENV === "production") {
+  if (!isDevelopmentAuthEnabled()) {
     throw new TRPCError({
       code: "NOT_FOUND",
       message: "Development user switching is disabled.",

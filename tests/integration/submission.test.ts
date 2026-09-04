@@ -4,27 +4,27 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { appRouter } from "@/server/api/root";
 import type { AuthenticatedUser } from "@/server/api/trpc";
 import { db } from "@/server/db";
-import { campaigns, submissions } from "@/server/db/schema";
+import { campaigns, submissionMetrics, submissions, users } from "@/server/db/schema";
 
 const prefix = `submission-test-${randomUUID()}`;
 const now = new Date();
 const oneDay = 24 * 60 * 60 * 1000;
 
 const admin: AuthenticatedUser = {
-  id: "11111111-1111-1111-1111-111111111111",
-  email: "admin@local.test",
+  id: randomUUID(),
+  email: `${prefix}-admin@local.test`,
   role: "admin",
 };
 
 const creatorOne: AuthenticatedUser = {
-  id: "22222222-2222-2222-2222-222222222222",
-  email: "creator1@local.test",
+  id: randomUUID(),
+  email: `${prefix}-creator-one@local.test`,
   role: "creator",
 };
 
 const creatorTwo: AuthenticatedUser = {
-  id: "33333333-3333-3333-3333-333333333333",
-  email: "creator2@local.test",
+  id: randomUUID(),
+  email: `${prefix}-creator-two@local.test`,
   role: "creator",
 };
 
@@ -69,6 +69,8 @@ let otherCreatorSubmissionId = "";
 const campaignIds: string[] = [];
 
 beforeAll(async () => {
+  await db.insert(users).values([admin, creatorOne, creatorTwo]);
+
   const activeCampaign = await adminCaller.campaign.create(
     campaignInput(`${prefix} active`, "active"),
   );
@@ -121,6 +123,7 @@ afterAll(async () => {
     .where(inArray(submissions.campaignId, campaignIds));
 
   await db.delete(campaigns).where(inArray(campaigns.id, campaignIds));
+  await db.delete(users).where(inArray(users.id, [admin.id, creatorOne.id, creatorTwo.id]));
 });
 
 describe("creator submission router", () => {
@@ -313,5 +316,36 @@ describe("creator submission router", () => {
     ).rejects.toMatchObject({
       code: "NOT_FOUND",
     });
+  });
+
+  it("returns the latest views and per-submission estimated earnings for the owner", async () => {
+    const created = await creatorOneCaller.submission.create({
+      campaignId: activeCampaignId,
+      postUrl: nextTikTokUrl(),
+      platform: "tiktok",
+    });
+    await db.insert(submissionMetrics).values([
+      {
+        submissionId: created.id,
+        capturedAt: "2030-01-01",
+        views: 1_500n,
+        likes: 0n,
+        comments: 0n,
+      },
+      {
+        submissionId: created.id,
+        capturedAt: "2030-01-02",
+        views: 2_000n,
+        likes: 0n,
+        comments: 0n,
+      },
+    ]);
+
+    const detail = await creatorOneCaller.submission.byId({ submissionId: created.id });
+    const mine = await creatorOneCaller.submission.mine({ page: 1, pageSize: 50 });
+    const listed = mine.items.find((submission) => submission.id === created.id);
+
+    expect(detail).toMatchObject({ latestViews: "2000", estimatedPayoutCents: "500" });
+    expect(listed).toMatchObject({ latestViews: "2000", estimatedPayoutCents: "500" });
   });
 });

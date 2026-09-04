@@ -1,326 +1,69 @@
-# NOTES
+# Notes
 
 ## Setup
 
-### Requirements
-
-- Node.js
-- pnpm
-- Docker
-
-### Local Setup
+Requirements: Node.js, npm, and Docker. pnpm is optional; package scripts are compatible with it.
 
 ```bash
-pnpm install
+npm install
+# Copy .env.example to .env, then set AUTH_COOKIE_SECRET to a random value of at least 32 characters.
 docker compose up -d
-pnpm db:migrate
-pnpm db:seed
-pnpm dev
+npm run db:migrate
+npm run db:seed
+npm run dev
 ```
 
-Application:
+The app runs at `http://localhost:3000`. The root page lists seeded development users; selecting the admin opens `/admin/campaigns`, while selecting a creator opens `/creator/campaigns`.
 
-```text
-http://localhost:3000
-```
-
-### Run Tests
+Useful commands:
 
 ```bash
-pnpm test
+npm run test
+npm run ingest
 ```
 
-### Run Metrics Ingestion
-
-```bash
-pnpm ingest
-```
-
-> These commands will be verified on a clean setup before submission.
-
----
-
-## Architecture
-
-The application uses:
-
-- Next.js 15 App Router
-- React
-- TypeScript in strict mode
-- tRPC v11
-- PostgreSQL
-- Drizzle ORM
-- TailwindCSS
-- shadcn/ui
-- react-hook-form
-- Zod
-- Vitest
-
-Application data is accessed through tRPC.
-
-Correctness-critical business logic is kept server-side and separated
-from the UI and tRPC transport layer where practical.
-
----
+`DATABASE_URL` and `AUTH_COOKIE_SECRET` are required. `.env` is ignored and `.env.example` contains only local development placeholders.
 
 ## Authentication and Authorization
 
-Authentication is intentionally lightweight as requested in the task.
-
-A signed cookie stores the selected development user and a dev-only
-user switcher allows switching between seeded users.
-
-Authorization is enforced server-side.
-
-tRPC procedures validate:
-
-- authentication
-- role
-- resource ownership where applicable
-
-Creator ownership is derived from the authenticated user and is never
-trusted from client-provided input.
-
----
+Development authentication uses an HTTP-only, signed cookie containing only `userId`. The user and role are loaded from PostgreSQL for every tRPC context; browser-provided roles, creator IDs, and submission statuses are never trusted. Development user selection and development-cookie authentication are disabled when `NODE_ENV=production`.
 
 ## Concurrent Approvals
 
-Campaign budget correctness is enforced at the database transaction level.
+Approval runs in one PostgreSQL transaction. It locks the related campaign with `SELECT ... FOR UPDATE`, making that row the serialization point for its budget. All budget-sensitive reads, including the current approved/paid spend and the target submission's latest metric, happen after that lock.
 
-The campaign row acts as the serialization point for budget-sensitive
-approval operations.
-
-The approval flow is:
-
-1. start a PostgreSQL transaction
-2. load and validate the pending submission
-3. lock the associated campaign row
-4. calculate the latest committed campaign spend
-5. calculate the payout for the target submission
-6. verify that sufficient budget remains
-7. approve the submission
-8. complete the campaign if remaining budget reaches zero
-9. commit
-
-This prevents two concurrent approval requests from independently
-observing the same remaining budget and both succeeding.
-
-A PostgreSQL integration test verifies that when the remaining budget
-can cover only one of two simultaneous approvals, exactly one succeeds.
+The integration test uses two independent PostgreSQL clients to approve two different submissions concurrently. When a campaign can afford only one, exactly one approval succeeds; the other fails with `INSUFFICIENT_CAMPAIGN_BUDGET`.
 
 ### Alternatives Considered
 
-<!--
-Fill after implementation.
+An application-level check-then-write was rejected because it races under concurrent requests. `SERIALIZABLE` isolation and optimistic concurrency were considered, but require retry/conflict handling beyond this take-home. Explicit campaign-row locking directly protects the shared budget while allowing approvals for unrelated campaigns to proceed independently.
 
-Potential alternatives to discuss if actually considered:
+## Payout and Budget Assumption
 
-- application-level check followed by update
-- SERIALIZABLE isolation
-- optimistic concurrency
-- explicit campaign row locking
+Money is integer cents. Earnings are `floor(views / 1000) * payout_per_1k_views`, using the latest metric for each submission.
 
-Explain the actual approach used and why.
--->
+Approved submissions can gain views during later ingestion, so derived spend can exceed the remaining budget that existed at approval time. The implementation preserves that real derived spend and clamps analytics `budgetLeft` to zero. No reservation or payout-snapshot model was added because the specification does not define one; production behavior needs a product decision.
 
----
+## Ingestion
 
-## Payout and Budget
+`npm run ingest` (or `pnpm ingest`) uses a UTC `YYYY-MM-DD` date. It processes approved submissions only, creates at most one metric row per submission/day, and never mutates an existing same-day row. The `(submission_id, captured_at)` unique constraint is the final duplicate-race boundary; only that targeted unique violation is treated as a skip. Each submission is processed independently so failures are reported without rolling back successful metrics.
 
-Money is represented as integer cents.
+## Analytics Assumptions
 
-Submission earnings are calculated as:
-
-```text
-floor(views / 1000) * payout_per_1k_views
-```
-
-The latest metric row determines the submission's current view count.
-
-Campaign spend is calculated server-side.
-
-Client-provided payout or budget values are never trusted.
-
-### Assumption: Earnings Growth After Approval
-
-The specification defines approval-time budget enforcement while metrics
-for approved submissions may continue to increase.
-
-This creates an ambiguity around how additional earnings should be
-allocated if later view growth would exceed the campaign budget.
-
-Final implementation behavior:
-
-<!-- Fill after implementation. -->
-
-In a production system I would clarify whether:
-
-- payout is reserved or snapshotted at approval time
-- earnings continue accruing and are capped by campaign budget
-- payout allocation happens separately during ingestion/payment
-
----
-
-## Metrics Ingestion
-
-`pnpm ingest` simulates the daily third-party metrics sync.
-
-For each approved submission:
-
-- at most one metric is stored per day
-- views never decrease
-- an existing metric for the same day is left unchanged
-- failure processing one submission does not stop the remaining submissions
-
-Database uniqueness on:
-
-```text
-(submission_id, captured_at)
-```
-
-provides the final protection against duplicate daily metrics.
-
-The existence check in application code is therefore not relied upon as
-the only correctness mechanism.
-
----
-
-## Analytics
-
-Campaign analytics include:
-
-- total approved views
-- budget spent
-- budget left
-- daily campaign views
-
-Days in the campaign period without metrics are returned with zero views.
-
-### Daily Views Assumption
-
-`submission_metric.views` is treated as the cumulative view count captured
-on that date.
-
-The specification does not explicitly state whether the chart should show
-cumulative daily snapshots or daily view deltas.
-
-Final implementation behavior:
-
-<!-- Confirm after implementation. -->
-
----
+Summary totals and spend include approved and paid submissions, each using only its latest metric. Daily views use approved submission metric snapshots, sum snapshots by UTC date, and zero-fill every missing campaign day. Daily values are cumulative snapshots, not view deltas.
 
 ## Deliberately Left Out
 
-The following are intentionally outside the scope unless required by the
-final implementation:
-
-- real authentication provider
-- external TikTok / Instagram / YouTube APIs
-- external payment processing
-- custom visual design
-- unrelated marketplace features
-
-The goal is to prioritize correctness of the requested workflow over
-feature count.
-
-<!-- Add any additional deliberate omissions discovered during implementation. -->
-
----
+- Real authentication provider
+- Third-party social APIs
+- Payment execution and mark-as-paid flow
+- Scheduler, queues, or workers
+- Custom product design and unrelated marketplace features
 
 ## Given Another Day
 
-<!--
-Fill after implementation.
-
-Choose one concrete improvement based on the actual finished project.
-
-Possible examples:
-
-- stronger payout allocation semantics
-- better integration-test isolation
-- ingestion observability
-- accessibility improvements
-- richer error handling
-
-Do not fabricate an improvement before seeing the final implementation.
--->
-
----
+Coordinate campaign configuration edits to the same approval row-lock semantics, or make budget, payout, and status immutable while a campaign is financially active.
 
 ## AI Tooling
 
-AI tooling was used during development.
-
-The exact uses and corrections are recorded honestly below.
-
-### Where AI Was Used
-
-<!--
-Fill during implementation.
-
-Examples only if actually applicable:
-
-- architecture discussion
-- project boilerplate
-- Drizzle query assistance
-- test scaffolding
-- code review
-- edge-case review
--->
-
-### Corrections Made to AI Output
-
-<!--
-Record real examples as they happen.
-
-For each useful example:
-
-1. What AI suggested
-2. Why it was incorrect or incomplete
-3. What was changed
-4. Why the final implementation is safer or clearer
-
-Do not fabricate examples.
--->
-
-All AI-generated code included in the final repository was reviewed and
-understood before submission.
-
----
-
-## Known Trade-offs and Assumptions
-
-<!--
-Keep this short in the final version.
-
-Record genuine specification ambiguities and intentional engineering
-trade-offs discovered during implementation.
--->
-
----
-
-## Verification Before Submission
-
-- [ ] clean checkout setup works
-- [ ] `docker compose up -d` works
-- [ ] migrations run successfully
-- [ ] seed runs successfully
-- [ ] application starts
-- [ ] admin campaign flow works
-- [ ] creator campaign flow works
-- [ ] creator ownership is enforced
-- [ ] payout calculation is correct
-- [ ] budget ceiling is enforced
-- [ ] concurrent approval test passes
-- [ ] authorization tests pass
-- [ ] repeated ingestion test passes
-- [ ] ingestion failure isolation works
-- [ ] analytics include missing dates
-- [ ] `pnpm test` passes
-- [ ] typecheck passes
-- [ ] lint passes
-- [ ] production build passes
-- [ ] live deployment works
-- [ ] live URL added to final submission
-- [ ] NOTES.md reflects the actual final implementation
+AI tooling assisted with architecture planning, project bootstrap and boilerplate, Drizzle/tRPC implementation, test scaffolding, and final code review. The resulting code was reviewed and corrected: platform URL checks were tightened from generic HTTP(S) validation to platform-specific heuristics; campaign forms default to no selected platforms; shared enum values are reused instead of duplicating platform/status lists; and explicit PostgreSQL campaign-row locking was retained after concurrency review. All final code was understood and verified before submission.

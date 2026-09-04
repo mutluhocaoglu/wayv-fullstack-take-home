@@ -23,12 +23,10 @@ export class InvalidSubmissionStateError extends Error {}
 export class InsufficientCampaignBudgetError extends Error {}
 
 function toNumber(value: unknown) {
-  if (typeof value === "number" && Number.isSafeInteger(value)) {
-    return value;
-  }
+  const parsed = typeof value === "number" ? value : Number(value);
 
-  if (typeof value === "string") {
-    return Number.parseInt(value, 10);
+  if (Number.isSafeInteger(parsed)) {
+    return parsed;
   }
 
   throw new Error("Expected an integer database value.");

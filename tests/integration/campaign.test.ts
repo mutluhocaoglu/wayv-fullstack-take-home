@@ -1,23 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { ilike } from "drizzle-orm";
+import { ilike, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { appRouter } from "@/server/api/root";
 import type { AuthenticatedUser } from "@/server/api/trpc";
 import { db } from "@/server/db";
-import { campaigns } from "@/server/db/schema";
+import { campaigns, users } from "@/server/db/schema";
 
 const prefix = `campaign-test-${randomUUID()}`;
 const now = new Date();
 
 const admin: AuthenticatedUser = {
-  id: "11111111-1111-1111-1111-111111111111",
-  email: "admin@local.test",
+  id: randomUUID(),
+  email: `${prefix}-admin@local.test`,
   role: "admin",
 };
 
 const creator: AuthenticatedUser = {
-  id: "22222222-2222-2222-2222-222222222222",
-  email: "creator1@local.test",
+  id: randomUUID(),
+  email: `${prefix}-creator@local.test`,
   role: "creator",
 };
 
@@ -43,6 +43,8 @@ let expiredActiveCampaignId = "";
 let pausedCampaignId = "";
 
 beforeAll(async () => {
+  await db.insert(users).values([admin, creator]);
+
   const validActive = await adminCaller.campaign.create(campaignInput(`${prefix} searchable active`, "active"));
   validActiveCampaignId = validActive.id;
 
@@ -69,6 +71,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await db.delete(campaigns).where(ilike(campaigns.title, `${prefix}%`));
+  await db.delete(users).where(inArray(users.id, [admin.id, creator.id]));
 });
 
 describe("campaign router", () => {

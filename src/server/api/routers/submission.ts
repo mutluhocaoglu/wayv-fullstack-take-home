@@ -64,6 +64,16 @@ function toBigInt(value: unknown) {
   throw new Error("Expected an integer database value.");
 }
 
+function toSafeInteger(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error("Expected an integer database value.");
+  }
+
+  return parsed;
+}
+
 export const submissionRouter = createTRPCRouter({
   create: creatorProcedure
     .input(submissionCreateSchema)
@@ -138,25 +148,61 @@ export const submissionRouter = createTRPCRouter({
         input.status ? eq(submissions.status, input.status) : undefined,
       );
       const offset = (input.page - 1) * input.pageSize;
-      const fields = {
-        ...submissionFields,
-        campaignTitle: campaigns.title,
-      };
-
       const [items, [{ total }]] = await Promise.all([
-        ctx.db
-          .select(fields)
-          .from(submissions)
-          .innerJoin(campaigns, eq(submissions.campaignId, campaigns.id))
-          .where(where)
-          .orderBy(desc(submissions.createdAt), desc(submissions.id))
-          .limit(input.pageSize)
-          .offset(offset),
+        ctx.db.execute(sql`
+          SELECT
+            submissions.id,
+            submissions.campaign_id AS "campaignId",
+            submissions.post_url AS "postUrl",
+            submissions.platform,
+            submissions.status,
+            submissions.rejection_reason AS "rejectionReason",
+            submissions.created_at AS "createdAt",
+            submissions.updated_at AS "updatedAt",
+            campaigns.title AS "campaignTitle",
+            COALESCE(latest_metric.views, 0)::bigint AS "latestViews",
+            campaigns.payout_per_1k_views AS "payoutPer1kViews"
+          FROM submissions
+          INNER JOIN campaigns ON campaigns.id = submissions.campaign_id
+          LEFT JOIN LATERAL (
+            SELECT views
+            FROM submission_metrics
+            WHERE submission_id = submissions.id
+            ORDER BY captured_at DESC
+            LIMIT 1
+          ) AS latest_metric ON true
+          WHERE submissions.creator_id = ${ctx.user.id}
+            ${input.status ? sql`AND submissions.status = ${input.status}` : sql``}
+          ORDER BY submissions.created_at DESC, submissions.id DESC
+          LIMIT ${input.pageSize}
+          OFFSET ${offset}
+        `),
         ctx.db.select({ total: count() }).from(submissions).where(where),
       ]);
 
+      const mappedItems = (items as Array<Record<string, unknown>>).map((item) => {
+        const latestViews = toBigInt(item.latestViews);
+
+        return {
+          id: item.id as string,
+          campaignId: item.campaignId as string,
+          postUrl: item.postUrl as string,
+          platform: item.platform as string,
+          status: item.status as string,
+          rejectionReason: item.rejectionReason as string | null,
+          createdAt: item.createdAt as Date,
+          updatedAt: item.updatedAt as Date,
+          campaignTitle: item.campaignTitle as string,
+            latestViews: latestViews.toString(),
+            estimatedPayoutCents: payoutFromLatestViews(
+              latestViews,
+              toSafeInteger(item.payoutPer1kViews),
+            ).toString(),
+        };
+      });
+
       return {
-        items,
+        items: mappedItems,
         page: input.page,
         pageSize: input.pageSize,
         total,
@@ -165,18 +211,56 @@ export const submissionRouter = createTRPCRouter({
     }),
 
   byId: creatorProcedure.input(submissionIdSchema).query(async ({ ctx, input }) => {
-    const [submission] = await ctx.db
-      .select({ ...submissionFields, campaignTitle: campaigns.title })
-      .from(submissions)
-      .innerJoin(campaigns, eq(submissions.campaignId, campaigns.id))
-      .where(and(eq(submissions.id, input.submissionId), eq(submissions.creatorId, ctx.user.id)))
-      .limit(1);
+    const rows = await ctx.db.execute(sql`
+      SELECT
+        submissions.id,
+        submissions.campaign_id AS "campaignId",
+        submissions.post_url AS "postUrl",
+        submissions.platform,
+        submissions.status,
+        submissions.rejection_reason AS "rejectionReason",
+        submissions.created_at AS "createdAt",
+        submissions.updated_at AS "updatedAt",
+        campaigns.title AS "campaignTitle",
+        COALESCE(latest_metric.views, 0)::bigint AS "latestViews",
+        campaigns.payout_per_1k_views AS "payoutPer1kViews"
+      FROM submissions
+      INNER JOIN campaigns ON campaigns.id = submissions.campaign_id
+      LEFT JOIN LATERAL (
+        SELECT views
+        FROM submission_metrics
+        WHERE submission_id = submissions.id
+        ORDER BY captured_at DESC
+        LIMIT 1
+      ) AS latest_metric ON true
+      WHERE submissions.id = ${input.submissionId}
+        AND submissions.creator_id = ${ctx.user.id}
+      LIMIT 1
+    `);
+    const submission = (rows as Array<Record<string, unknown>>)[0];
 
     if (!submission) {
       throw new TRPCError({ code: "NOT_FOUND", message: "Submission not found." });
     }
 
-    return submission;
+    const latestViews = toBigInt(submission.latestViews);
+
+    return {
+      id: submission.id as string,
+      campaignId: submission.campaignId as string,
+      postUrl: submission.postUrl as string,
+      platform: submission.platform as string,
+      status: submission.status as string,
+      rejectionReason: submission.rejectionReason as string | null,
+      createdAt: submission.createdAt as Date,
+      updatedAt: submission.updatedAt as Date,
+      campaignTitle: submission.campaignTitle as string,
+      latestViews: latestViews.toString(),
+      estimatedPayoutCents: payoutFromLatestViews(
+        latestViews,
+        toSafeInteger(submission.payoutPer1kViews),
+      ).toString(),
+    };
   }),
 
   pendingByCampaign: adminProcedure
