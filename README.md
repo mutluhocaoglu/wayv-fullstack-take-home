@@ -4,7 +4,7 @@ A small full-stack creator clipping marketplace focused on authorization, payout
 
 ## Stack
 
-Next.js 15 App Router, React, TypeScript, tRPC v11, Drizzle ORM, PostgreSQL, Tailwind CSS, shadcn/ui setup, React Hook Form, Zod, and Vitest.
+Next.js 15 App Router, React, TypeScript, tRPC v11, Drizzle ORM, PostgreSQL, Tailwind CSS, React Hook Form, Zod, and Vitest.
 
 ## Local Setup
 
